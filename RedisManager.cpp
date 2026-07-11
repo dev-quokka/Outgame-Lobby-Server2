@@ -12,18 +12,10 @@ sw::redis::Redis& RedisManager::GetRedis() {
     return *redis;
 }
 
-
-void RedisManager::Init(const uint16_t RedisThreadCnt_) {
-
-    // -------------------- SET PACKET HANDLERS ----------------------
-    packetIDTable = std::unordered_map<uint16_t, RECV_PACKET_FUNCTION>();
-
-    // LOGIN
-    packetIDTable[(uint16_t)PACKET_ID::USER_LOBBY_CONNECT_REQUEST] = &RedisManager::UserConnect;
-
-
-    RedisRun(RedisThreadCnt_);
+void RedisManager::SetManager(ConnUsersManager* connUsersManager_) {
+    connUsersManager = connUsersManager_;
 }
+
 
 // ===================== PACKET MANAGEMENT =====================
 
@@ -56,6 +48,33 @@ void RedisManager::RedisRun(const uint16_t RedisThreadCnt_) { // Connect Redis S
         std::cerr << "[Redis] Connection failed: " << e.what() << std::endl;
         throw;  // 연결 실패하면 서버 시작 중단
     }
+
+    // -------------------- SET PACKET HANDLERS ----------------------
+    packetIDTable = std::unordered_map<uint16_t, RECV_PACKET_FUNCTION>();
+
+    // 접속
+    packetIDTable[(uint16_t)PACKET_ID::USER_LOBBY_CONNECT_REQUEST] = &RedisManager::UserConnect;
+
+    // 유저 검색
+    packetIDTable[(uint16_t)PACKET_ID::USER_SEARCH_REQUEST] = &RedisManager::ProcessUserSearch;
+
+    // 친구
+    packetIDTable[(uint16_t)PACKET_ID::FRIEND_REQUEST_REQUEST] = &RedisManager::ProcessFriendRequest;
+    packetIDTable[(uint16_t)PACKET_ID::FRIEND_ACTION_REQUEST] = &RedisManager::ProcessFriendAccept;
+
+    // 코스튬
+    packetIDTable[(uint16_t)PACKET_ID::COSTUME_CHANGE_REQUEST] = &RedisManager::ProcessCostumeChange;
+
+    // 파티
+    packetIDTable[(uint16_t)PACKET_ID::PARTY_FOLLOW_REQUEST] = &RedisManager::ProcessPartyFollow;
+    packetIDTable[(uint16_t)PACKET_ID::PARTY_INVITE_REQUEST] = &RedisManager::ProcessPartyInvite;
+    packetIDTable[(uint16_t)PACKET_ID::PARTY_INVITE_ACCEPT_REQUEST] = &RedisManager::ProcessPartyInviteAccept;
+    packetIDTable[(uint16_t)PACKET_ID::PARTY_LEAVE_REQUEST] = &RedisManager::ProcessPartyLeave;
+    packetIDTable[(uint16_t)PACKET_ID::PARTY_KICK_REQUEST] = &RedisManager::ProcessPartyKick;
+    packetIDTable[(uint16_t)PACKET_ID::PARTY_DELEGATE_REQUEST] = &RedisManager::ProcessPartyDelegate;
+
+    // 매칭
+    packetIDTable[(uint16_t)PACKET_ID::MATCH_START_REQUEST] = &RedisManager::ProcessMatchStart;
 }
 
 bool RedisManager::CreateRedisThread(const uint16_t RedisThreadCnt_) {
@@ -153,6 +172,7 @@ void RedisManager::ProcessFriendAccept(uint16_t connObjNum_, uint16_t packetSize
             R"({"type":6,"data":{"targetPk":)"
             + std::to_string(*targetPk)
             + R"(,"senderPk":)" + std::to_string(myPk)
+            + R"(,"senderId":")" + myId + R"(")"
             + R"(}})";
 
         PublishToUsers({ *targetPk }, message);
@@ -175,6 +195,7 @@ void RedisManager::ProcessFriendAccept(uint16_t connObjNum_, uint16_t packetSize
             R"({"type":7,"data":{"targetPk":)"
             + std::to_string(*targetPk)
             + R"(,"senderPk":)" + std::to_string(myPk)
+            + R"(,"senderId":")" + myId + R"(")"
             + R"(}})";
 
         PublishToUsers({ *targetPk }, message);
@@ -192,7 +213,7 @@ void RedisManager::ProcessUserSearch(uint16_t connObjNum_, uint16_t packetSize_,
     res.PacketLength = sizeof(USER_SEARCH_RESPONSE);
 
     // 본인 검색 막기
-    if (std::string(reqPacket->userId) ==connUsersManager->FindUser(connObjNum_)->GetId()) {
+    if (std::string(reqPacket->userId) == connUsersManager->FindUser(connObjNum_)->GetId()) {
         res.isSuccess = false;
         connUsersManager->FindUser(connObjNum_)->PushSendMsg(sizeof(res), (char*)&res);
         return;
@@ -231,7 +252,7 @@ void RedisManager::ProcessUserSearch(uint16_t connObjNum_, uint16_t packetSize_,
     }
 
     // 3. 결과 전송
-    strncpy_s(res.userId, sizeof(res.userId),result->userId, _TRUNCATE);
+    strncpy_s(res.userId, sizeof(res.userId), result->userId, _TRUNCATE);
     res.userLevel = result->userLevel;
     res.isSuccess = true;
     connUsersManager->FindUser(connObjNum_)->PushSendMsg(sizeof(res), (char*)&res);
@@ -243,7 +264,7 @@ void RedisManager::ProcessFriendRequest(uint16_t connObjNum_, uint16_t packetSiz
     FRIEND_REQUEST_RESPONSE res;
     res.PacketId = (uint16_t)PACKET_ID::FRIEND_REQUEST_RESPONSE;
     res.PacketLength = sizeof(FRIEND_REQUEST_RESPONSE);
-    strncpy_s(res.targetId, sizeof(res.targetId),reqPacket->targetId, _TRUNCATE);
+    strncpy_s(res.targetId, sizeof(res.targetId), reqPacket->targetId, _TRUNCATE);
 
     auto me = connUsersManager->FindUser(connObjNum_);
     uint32_t myPk = me->GetPk();
@@ -272,7 +293,7 @@ void RedisManager::ProcessFriendRequest(uint16_t connObjNum_, uint16_t packetSiz
         R"({"type":8,"data":{"targetPk":)"
         + std::to_string(*targetPk)
         + R"(,"senderPk":)" + std::to_string(myPk)
-        + R"(,"senderId":")" + myId + R"(")" 
+        + R"(,"senderId":")" + myId + R"(")"
         + R"(,"senderLevel":)" + std::to_string(myLevel)
         + R"(,"onlineStatus":1}})"; // 로비에 있으니까 항상 1
 
@@ -620,7 +641,7 @@ void RedisManager::ProcessPartyKick(uint16_t connObjNum_, uint16_t packetSize_, 
     PARTY_KICK_RESPONSE res;
     res.PacketId = (uint16_t)PACKET_ID::PARTY_KICK_RESPONSE;
     res.PacketLength = sizeof(PARTY_KICK_RESPONSE);
-    strncpy_s(res.targetId, sizeof(res.targetId),reqPacket->targetId, _TRUNCATE);
+    strncpy_s(res.targetId, sizeof(res.targetId), reqPacket->targetId, _TRUNCATE);
 
     auto tempUser = connUsersManager->FindUser(connObjNum_);
     uint32_t myPk = tempUser->GetPk();
@@ -828,7 +849,7 @@ void RedisManager::NotifyFriendOffline(uint32_t userPk_) {
     PublishToUsers(friendPks, message);
 }
 
-void RedisManager::NotifyCostumeChangeToParty(uint32_t userPk_, const std::string& userId_,uint32_t partyId_,uint8_t slot_, uint32_t itemCode_) {
+void RedisManager::NotifyCostumeChangeToParty(uint32_t userPk_, const std::string& userId_, uint32_t partyId_, uint8_t slot_, uint32_t itemCode_) {
     try {
         // 파티원 pk 목록 조회
         std::string memberKey = "party:" + std::to_string(partyId_) + ":members";
@@ -1060,7 +1081,7 @@ void RedisManager::UserConnect(uint16_t connObjNum_, uint16_t packetSize_, char*
 
     // userId + token으로 검증
     uint32_t userPk = 0;
-    if (!VerifyUserToken(tempId,reqPacket->token,userPk)) {
+    if (!VerifyUserToken(tempId, reqPacket->token, userPk)) {
         userConnRes.isSuccess = false;
         tempUser->PushSendMsg(sizeof(userConnRes), (char*)&userConnRes);
         return;
@@ -1093,6 +1114,7 @@ void RedisManager::UserConnect(uint16_t connObjNum_, uint16_t packetSize_, char*
     tempUser->SetId(tempId);
     tempUser->SetLevel(tempSessionInfo->userLevel);
     tempUser->SetExp(tempSessionInfo->userExp);
+    connUsersManager->SetPkToObjNum(userPk, connObjNum_);
 
     // Redis에서 기존 파티 상태 확인
     std::string userKey = "user:" + std::to_string(userPk);
@@ -1122,13 +1144,14 @@ void RedisManager::UserConnect(uint16_t connObjNum_, uint16_t packetSize_, char*
     tempUser->SetPartyId(currentPartyId);
 
     if (currentPartyId != 0) {
-        SendPartyInfo(connObjNum_, currentPartyId);       
+        SendPartyInfo(connObjNum_, currentPartyId);
         NotifyPartyMemberStatus(userPk, currentPartyId, 1); // 파티원들에게 재접속 알림
     }
 
     // Redis 상태 갱신
     std::unordered_map<std::string, std::string> fields = {
         {"state",   "lobby"},
+        {"server",  GetServerName(SERVER_TYPE)},
         {"partyId", std::to_string(currentPartyId)},
         {"level",   std::to_string(tempSessionInfo->userLevel)},
         {"exp",     std::to_string(tempSessionInfo->userExp)}
@@ -1188,12 +1211,19 @@ void RedisManager::SendFriendRequestToUser(uint32_t targetPk_, uint32_t senderPk
     auto tempObjNum = connUsersManager->GetObjNumByPk(targetPk_); // 친구 접속 상태 받을 현재 서버에 있는 유저
     auto temoUser = connUsersManager->FindUser(tempObjNum);
 
+    if (!temoUser) {
+        std::cout << "[SendFriendRequestToUser] 유저 못 찾음!\n";  // 디버그
+        return;
+    }
+
+
     temoUser->AddFriend(senderPk_);
 
     notify.senderPk = senderPk_;
     strncpy_s(notify.senderId, sizeof(notify.senderId), senderId_.c_str(), _TRUNCATE);
     notify.senderLevel = senderLevel_;
     notify.onlineStatus = onlineStatus_;
+    std::cout << "[SendFriendRequestToUser] 패킷 전송 완료\n";
     temoUser->PushSendMsg(sizeof(notify), (char*)&notify);
 }
 
@@ -1210,24 +1240,26 @@ void RedisManager::SendFriendStatusToUser(uint32_t targetPk_, uint32_t friendPk_
     connUsersManager->FindUser(tempObjNum)->PushSendMsg(sizeof(friendNotifyPacket), (char*)&friendNotifyPacket);
 }
 
-void RedisManager::SendFriendAcceptToUser(uint32_t targetPk_, uint32_t friendPk_, uint16_t accept_) {
-    auto tempConnUser = connUsersManager->FindUserByPk(targetPk_); // 친구 요청 상태 받을 현재 서버에 있는 유저 
+void RedisManager::SendFriendAcceptToUser(uint32_t targetPk_, uint32_t senderPk_, const std::string& senderId_, uint16_t accept_) {
 
-    // 세션 캐시 갱신
-    if (accept_ == 0) { // 수락/친구 추가
+    auto tempConnUser = connUsersManager->FindUserByPk(targetPk_);
+    if (!tempConnUser) return;
 
+    if (accept_ == 0) {
+        // 수락 - 세션 캐시에 추가
     }
-    else { // 거절/친구 제거
-        tempConnUser->RemoveFriend(friendPk_);
+    else {
+        // 거절 - 세션 캐시에서 제거
+        tempConnUser->RemoveFriend(senderPk_);
     }
 
-    FRIEND_ACCEPT_NOTIFY friendNotifyPacket;
-    friendNotifyPacket.PacketId = (uint16_t)PACKET_ID::FRIEND_ACCEPT_NOTIFY;
-    friendNotifyPacket.PacketLength = sizeof(friendNotifyPacket);
-    friendNotifyPacket.friendPk = friendPk_;
-    friendNotifyPacket.accept = accept_;
-
-    tempConnUser->PushSendMsg(sizeof(friendNotifyPacket), (char*)&friendNotifyPacket);
+    FRIEND_ACCEPT_NOTIFY notify;
+    notify.PacketId = (uint16_t)PACKET_ID::FRIEND_ACCEPT_NOTIFY;
+    notify.PacketLength = sizeof(notify);
+    strncpy_s(notify.senderId, sizeof(notify.senderId),
+        senderId_.c_str(), _TRUNCATE);
+    notify.accept = accept_;
+    tempConnUser->PushSendMsg(sizeof(notify), (char*)&notify);
 }
 
 void RedisManager::SendCostumeChangeToUser(uint32_t targetPk_, uint32_t userPk_, const std::string& userId_, uint8_t slot_, uint32_t itemCode_) {
@@ -1373,7 +1405,7 @@ void RedisManager::SendPartyInviteRejectToUser(uint32_t targetPk_, const std::st
     PARTY_INVITE_REJECT_NOTIFY notify;
     notify.PacketId = (uint16_t)PACKET_ID::PARTY_INVITE_REJECT_NOTIFY;
     notify.PacketLength = sizeof(notify);
-    strncpy_s(notify.senderId, sizeof(notify.senderId),senderId_.c_str(), _TRUNCATE);
+    strncpy_s(notify.senderId, sizeof(notify.senderId), senderId_.c_str(), _TRUNCATE);
 
     user->PushSendMsg(sizeof(notify), (char*)&notify);
 }
@@ -1449,7 +1481,13 @@ void RedisManager::PublishToUsers(const std::vector<uint32_t>& targetPks_, const
             try {
                 auto server = replies.get<sw::redis::OptionalString>(i);
                 if (server.has_value()) {
+                    std::cout << "[PublishToUsers] pk:" << targetPks_[i]
+                        << " server:" << *server << '\n';  // 디버그
                     serverTargets[*server].push_back(targetPks_[i]);
+                }
+                else {
+                    std::cout << "[PublishToUsers] pk:" << targetPks_[i]
+                        << " server: 없음 (오프라인)\n";  // 디버그
                 }
             }
             catch (...) { continue; } // 예외 발생한 pk 하나만 건너뛰고 나머지는 계속 처리
@@ -1462,6 +1500,8 @@ void RedisManager::PublishToUsers(const std::vector<uint32_t>& targetPks_, const
         // 서버별로 타겟 pk를 묶어서 한 번에 publish
         // 같은 서버에 친구가 N명 있어도 publish는 1번 -> Redis 왕복 최소화
         for (const auto& [server, pks] : serverTargets) {
+            std::cout << "[PublishToUsers] publish → " << server
+                << ":events (" << pks.size() << "명)\n";  // 디버그
             std::string targets = "[";
             for (int i = 0; i < (int)pks.size(); i++) {
                 if (i > 0) targets += ",";

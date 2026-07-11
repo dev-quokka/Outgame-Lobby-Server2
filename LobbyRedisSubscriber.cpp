@@ -57,7 +57,8 @@ void LobbyRedisSubscriber::SubscribeLoop() {
 }
 
 void LobbyRedisSubscriber::HandleLobbyEvent(const std::string& channel, const std::string& message) {
-
+    std::cout << "[HandleLobbyEvent] channel: " << channel
+        << " message: " << message << '\n';  // 디버그 추가
     auto pos = message.find("\"type\":");
     if (pos == std::string::npos) {
         std::cerr << "[HandleLobbyEvent] Invalid message: " << message << '\n';
@@ -161,13 +162,14 @@ void LobbyRedisSubscriber::HandleFriendRequest(const std::string& message) {
 }
 
 void LobbyRedisSubscriber::HandleFriendAccepted(const std::string& message) {
-    // message 형식 : {"type":6,"data":{"targetPk":13,"senderPk":5}}
+    // message 형식 : {"type":6,"data":{"targetpk":13,"senderpk":5}}
 
     uint32_t targetPk = ParseUintField(message, "targetPk");
     uint32_t senderPk = ParseUintField(message, "senderPk");
+    std::string senderId = ParseStringField(message, "senderId");
     if (targetPk == 0 || senderPk == 0) return;
 
-    RedisManager::GetInstance().SendFriendAcceptToUser(targetPk, senderPk, 0);  // targetPk에게 senderPk의 친구 수락 메시지 전달
+    RedisManager::GetInstance().SendFriendAcceptToUser(targetPk, senderPk, senderId, 0);  // targetPk에게 senderPk의 친구 수락 메시지 전달
     std::cout << "[HandleFriendAccepted] targetPk: " << targetPk << " senderPk: " << senderPk << '\n';
 }
 
@@ -176,9 +178,10 @@ void LobbyRedisSubscriber::HandleFriendRemoved(const std::string& message) {
 
     uint32_t targetPk = ParseUintField(message, "targetPk");
     uint32_t senderPk = ParseUintField(message, "senderPk");
+    std::string senderId = ParseStringField(message, "senderId");
     if (targetPk == 0 || senderPk == 0) return;
 
-    RedisManager::GetInstance().SendFriendAcceptToUser(targetPk, senderPk, 1);  // targetPk에게 senderPk의 친구 수락 메시지 전달
+    RedisManager::GetInstance().SendFriendAcceptToUser(targetPk, senderPk, senderId, 1);  // targetPk에게 senderPk의 친구 수락 메시지 전달
     std::cout << "[HandleFriendRemoved] targetPk: " << targetPk << " senderPk: " << senderPk << '\n';
 }
 
@@ -194,7 +197,7 @@ void LobbyRedisSubscriber::HandleCostumeChange(const std::string& message) {
 
     auto targets = ParseTargets(message);
     for (auto targetPk : targets) {
-        RedisManager::GetInstance().SendCostumeChangeToUser(targetPk, userPk, userId,static_cast<uint8_t>(slot), itemCode);
+        RedisManager::GetInstance().SendCostumeChangeToUser(targetPk, userPk, userId, static_cast<uint8_t>(slot), itemCode);
     }
 }
 
@@ -250,7 +253,7 @@ void LobbyRedisSubscriber::HandlePartyInvite(const std::string& message) {
         }
         return;
     }
-    
+
     // 초대 알림 처리
     // {"type":9,"data":{"targetPk":14,"senderPk":5,"senderId":"dongchan",
     //  "senderLevel":30,"partyId":7,"memberCount":2,"targets":[14]}}
@@ -319,10 +322,10 @@ void LobbyRedisSubscriber::HandleMatchStart(const std::string& message) {
 // {"type":1,"data":{"userPk":13}}에서 13을 추출
 uint32_t LobbyRedisSubscriber::ParseUintField(const std::string& message, const std::string& key) {
     std::string search = "\"" + key + "\":";
-    
+
     auto pos = message.find(search);
     if (pos == std::string::npos) return 0;
-    
+
     pos += search.length();
     return static_cast<uint32_t>(std::stoul(message.substr(pos)));
 }
@@ -356,9 +359,9 @@ std::string LobbyRedisSubscriber::ParseStringField(const std::string& message, c
     auto pos = message.find(search);
     if (pos == std::string::npos) return "";
     pos += search.length();
-    
+
     auto end = message.find("\"", pos);
-    
+
     if (end == std::string::npos) return "";
     return message.substr(pos, end - pos);
 }

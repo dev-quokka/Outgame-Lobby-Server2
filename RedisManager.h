@@ -29,6 +29,7 @@ public:
 
     // ===================== REDIS MANAGEMENT =====================
     void RedisRun(const uint16_t RedisThreadCnt_);
+    void SetManager(ConnUsersManager* connUsersManager_);
     bool CreateRedisThread(const uint16_t RedisThreadCnt_);
     void RedisThread();
 
@@ -43,10 +44,10 @@ public:
 
     // ====================== REDIS =======================
     bool VerifyUserToken(const std::string& userId_, const char* token_, uint32_t& outUserPk_); // JWT 토큰 검증 + userPk 추출
-   
+
 
     // ====================== 유저 상태 ======================
-    
+
     // 로비 서버 접속 처리 (JWT 검증, 세션/Redis 세팅, 친구 온라인 알림)
     void UserConnect(uint16_t connObjNum_, uint16_t packetSize_, char* pPacket_);
     // 로비 서버 연결 종료 처리 (세션 정리, 친구 오프라인 알림)
@@ -112,7 +113,7 @@ public:
     // 친구 온라인/오프라인 상태 변경 패킷 전송
     void SendFriendStatusToUser(uint32_t targetPk_, uint32_t friendPk_, uint16_t status_);
     // 친구 요청 수락/거절 결과 패킷 전송
-    void SendFriendAcceptToUser(uint32_t targetPk_, uint32_t friendPk_, uint16_t status_);
+    void SendFriendAcceptToUser(uint32_t targetPk_, uint32_t senderPk_, const std::string& senderId_, uint16_t accept_);
     // 친구 요청 알림 패킷 전송 (요청자 정보 포함)
     void SendFriendRequestToUser(uint32_t targetPk_, uint32_t senderPk_, const std::string& senderId_, uint16_t senderLevel_, uint8_t onlineStatus_);
     // 파티원 코스튬 변경 알림 패킷 전송
